@@ -2,6 +2,7 @@
 
 #include "credentials.h"
 #include "OTA.h"
+#include "telegramBot.h"
 
 const char *ssid     = mySSID;
 const char *password = myPASSWORD;
@@ -24,6 +25,10 @@ void setup() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
+  // Setup Telegram bot
+  setupTelegramBot();
+
+
   // Setup OTA
   ArduinoOTA.setHostname("MouseTrap");
   otaSetup();
@@ -33,4 +38,5 @@ void setup() {
 void loop() {
   // Check OTA
   ArduinoOTA.handle();
+//  sendTelegramMessage();
 }
