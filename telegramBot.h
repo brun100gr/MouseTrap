@@ -23,10 +23,9 @@ UniversalTelegramBot bot(BOTtoken, secured_client);
 
 void setupTelegramBot() {
   secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); // Add root certificate for api.telegram.org
-  bot.sendMessage(CHAT_ID, "Bot started up", "");
 }
 
-void sendTelegramMessage() {
-  bot.sendMessage(CHAT_ID, "Ciao!!!!", "");
+void sendTelegramMessage(const String& message) {
+  bot.sendMessage(CHAT_ID, message, "");
   delay(1000);
 }

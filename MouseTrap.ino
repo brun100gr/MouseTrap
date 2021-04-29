@@ -16,7 +16,15 @@ int loopCounter = AWAKE_TIME;
 
 const int BUTTON_PIN_BITMASK = 0x200000000; // 2^33 in hex
 
+// Battery monitor is connected to GPIO 34 (Analog ADC1_CH6) 
+const int batteryMonitorPin = 34;
+
+// Number of ADC samples to be discarded to stabilize ADC
+const int NUMBER_OF_SAMPLES = 3;
+
 void setup() {
+  int batteryMonitorValue;
+
   // Start serial port for debugging
   Serial.begin(115200);
 
@@ -51,20 +59,26 @@ void setup() {
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_32,1); //1 = High, 0 = Low
   esp_sleep_enable_ext1_wakeup(BUTTON_PIN_BITMASK,ESP_EXT1_WAKEUP_ANY_HIGH);
-  sendTelegramMessage();
+
+  // Reading battery voltage
+  for (int i = 0; i < NUMBER_OF_SAMPLES + 1; i++)
+  {
+    batteryMonitorValue = analogRead(batteryMonitorPin);
+  }
+  debugA("ADC %d, battery voltage: %f", batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
+  String telegramMessage = "ADC: " + String(batteryMonitorValue) + ", battery voltage: " + String(3.3/4096*batteryMonitorValue*2);
+  sendTelegramMessage(telegramMessage);
 }
 
 void loop() {
   // Check OTA
   ArduinoOTA.handle();
-//  debugA("+");
-  Serial.println("+");
+
   Debug.handle();
   delay(1000);
 #if 0
   if (stayAwake() == false) {
-    debugA("Start to sleep");
-    Serial.println("Start to sleep");
+    debugV("Start to sleep");
     esp_deep_sleep_start();
   }
 #endif
