@@ -3,6 +3,7 @@
 #include "credentials.h"
 #include "OTA.h"
 #include "telegramBot.h"
+#include "telnetDebug.h"
 
 const char *ssid     = mySSID;
 const char *password = myPASSWORD;
@@ -36,6 +37,9 @@ void setup() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
+  // Setup remote debug
+  remoteDebugSetup();
+
   // Setup Telegram bot
   setupTelegramBot();
 
@@ -53,16 +57,23 @@ void setup() {
 void loop() {
   // Check OTA
   ArduinoOTA.handle();
-
+//  debugA("+");
+  Serial.println("+");
+  Debug.handle();
+  delay(1000);
+#if 0
   if (stayAwake() == false) {
+    debugA("Start to sleep");
     Serial.println("Start to sleep");
     esp_deep_sleep_start();
   }
+#endif
 }
 
 bool stayAwake(void) {
   if (loopCounter > 0) {
     loopCounter--;
+    debugA("+");
     delay(1000);
     return true;
   } else {
