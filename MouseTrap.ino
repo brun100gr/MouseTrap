@@ -61,6 +61,7 @@ void setup() {
   esp_sleep_enable_ext1_wakeup(BUTTON_PIN_BITMASK,ESP_EXT1_WAKEUP_ANY_HIGH);
 
   // Reading battery voltage
+  // Discard same samples to stabilize ADC
   for (int i = 0; i < NUMBER_OF_SAMPLES + 1; i++)
   {
     batteryMonitorValue = analogRead(batteryMonitorPin);
