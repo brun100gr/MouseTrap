@@ -11,7 +11,7 @@
 #include <ArduinoJson.h>
 
 // Initialize Telegram BOT
-#define BOTtoken "1644308976:AAGfRY6c-N3w81BJXVaNadCaiSRBIH06ffA"  // your Bot Token (Get from Botfather)-->MouseTrap21013Bot
+#define BOTtoken "1720331573:AAHc977QrVeVwehHcWIsGqOYvb8hOmkLkFY"  // your Bot Token (Get from Botfather)-->MouseTrap21013Bot
 
 // Use @myidbot to find out the chat ID of an individual or a group
 // Also note that you need to click "start" on a bot before it can

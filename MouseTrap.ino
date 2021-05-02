@@ -1,15 +1,21 @@
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 
 #include "credentials.h"
 #include "OTA.h"
 #include "telegramBot.h"
 #include "telnetDebug.h"
+#include "rootCACertificate.h"
 
 const char *ssid     = mySSID;
 const char *password = myPASSWORD;
 
 const int uS_TO_S_FACTOR = 1000000; /* Conversion factor for micro seconds to seconds */ 
 const int TIME_TO_SLEEP = 60; /* Time ESP32 will go to sleep (in seconds) */
+
+// Version SW
+const String currentSWVersion = "0.0";
 
 const int AWAKE_TIME = 60;  // seconds
 int loopCounter = AWAKE_TIME;
@@ -21,6 +27,80 @@ const int batteryMonitorPin = 34;
 
 // Number of ADC samples to be discarded to stabilize ADC
 const int NUMBER_OF_SAMPLES = 3;
+
+// Set time via NTP, as required for x.509 validation
+void setClock() {
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");  // UTC
+
+  Serial.print(F("Waiting for NTP time sync: "));
+  time_t now = time(nullptr);
+  while (now < 8 * 3600 * 2) {
+    yield();
+    delay(500);
+    Serial.print(F("."));
+    debugA("Connecting to NTP Server.");
+    now = time(nullptr);
+  }
+
+  Serial.println(F(""));
+  struct tm timeinfo;
+  gmtime_r(&now, &timeinfo);
+  Serial.print(F("Current time: "));
+  Serial.print(asctime(&timeinfo));
+  debugA("Current time: %s", asctime(&timeinfo));
+}
+
+void checkVersion()
+{
+  WiFiClientSecure *client = new WiFiClientSecure;
+  if(client) {
+    client -> setCACert(rootCACertificate);
+
+    {
+      // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
+      HTTPClient https;
+  
+      Serial.print("[HTTPS] begin...\n");
+      https.useHTTP10(true);
+      if (https.begin(*client, "https://brun100gr.netsons.org/ESP32/version.json")) {  // HTTPS
+        Serial.println("[HTTPS] GET...\n");
+        // start connection and send HTTP header
+        int httpCode = https.GET();
+  
+        // httpCode will be negative on error
+        if (httpCode > 0) {
+          // HTTP header has been send and Server response header has been handled
+          Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
+  
+          // file found at server
+          if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+            // Parse response
+            DynamicJsonDocument doc(2048);
+            deserializeJson(doc, https.getStream());
+            
+            // Read values
+            Serial.println(doc["version"].as<String>());
+            
+            // Disconnect
+            https.end();
+          }
+        } else {
+          Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+        }
+ 
+        https.end();
+      } else {
+        Serial.printf("[HTTPS] Unable to connect\n");
+      }
+
+      // End extra scoping block
+    }
+  
+    delete client;
+  } else {
+    Serial.println("Unable to create client");
+  }
+}
 
 void setup() {
   int batteryMonitorValue;
@@ -48,6 +128,9 @@ void setup() {
   // Setup remote debug
   remoteDebugSetup();
 
+  // Set time via NTP, as required for x.509 validation
+  setClock();
+  
   // Setup Telegram bot
   setupTelegramBot();
 
@@ -55,6 +138,8 @@ void setup() {
   ArduinoOTA.setHostname("MouseTrap");
   otaSetup();
 
+  // Check if a new version is available
+  checkVersion();
   // Setup wekeup sources
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_32,1); //1 = High, 0 = Low
@@ -66,8 +151,9 @@ void setup() {
   {
     batteryMonitorValue = analogRead(batteryMonitorPin);
   }
-  debugA("ADC %d, battery voltage: %f", batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
-  String telegramMessage = "ADC: " + String(batteryMonitorValue) + ", battery voltage: " + String(3.3/4096*batteryMonitorValue*2);
+  Serial.printf("Version: %s - ADC %d, battery voltage: %f", currentSWVersion, batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
+  debugA("Version: %s - ADC %d, battery voltage: %f", currentSWVersion, batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
+  String telegramMessage = "Version: " + currentSWVersion + " - ADC: " + String(batteryMonitorValue) + ", battery voltage: " + String(3.3/4096*batteryMonitorValue*2);
   sendTelegramMessage(telegramMessage);
 }
 
@@ -76,6 +162,7 @@ void loop() {
   ArduinoOTA.handle();
 
   Debug.handle();
+
   delay(1000);
 #if 0
   if (stayAwake() == false) {
