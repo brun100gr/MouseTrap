@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <HTTPUpdate.h>
 #include <WiFiClientSecure.h>
 
 #include "credentials.h"
@@ -15,7 +16,7 @@ const int uS_TO_S_FACTOR = 1000000; /* Conversion factor for micro seconds to se
 const int TIME_TO_SLEEP = 60; /* Time ESP32 will go to sleep (in seconds) */
 
 // Version SW
-const String currentSWVersion = "0.0";
+const String currentSWVersion = "0.1";
 
 const int AWAKE_TIME = 60;  // seconds
 int loopCounter = AWAKE_TIME;
@@ -56,6 +57,8 @@ void checkVersion()
   if(client) {
     client -> setCACert(rootCACertificate);
 
+    // Reading data over SSL may be slow, use an adequate timeout
+    client -> setTimeout(12000 / 1000); // timeout argument is defined in seconds for setTimeout
     {
       // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
       HTTPClient https;
@@ -75,12 +78,34 @@ void checkVersion()
           // file found at server
           if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
             // Parse response
-            DynamicJsonDocument doc(2048);
+            DynamicJsonDocument doc(128);
             deserializeJson(doc, https.getStream());
             
             // Read values
-            Serial.println(doc["version"].as<String>());
-            
+            Serial.println(doc["version"].as<float>());
+
+            // Check if a newer version is available
+            if (float(doc["version"]) > currentSWVersion.toFloat()) {
+              Serial.println("New SW version available!");
+              debugA("New SW version available!");
+              
+              t_httpUpdate_return ret = httpUpdate.update(*client, doc["url"]);
+              switch (ret) {
+                case HTTP_UPDATE_FAILED:
+                  Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+                  break;
+          
+                case HTTP_UPDATE_NO_UPDATES:
+                  Serial.println("HTTP_UPDATE_NO_UPDATES");
+                  break;
+          
+                case HTTP_UPDATE_OK:
+                  Serial.println("HTTP_UPDATE_OK");
+                  delay(1000);
+                  ESP.restart();
+                  break;
+              }
+            }
             // Disconnect
             https.end();
           }
@@ -92,7 +117,6 @@ void checkVersion()
       } else {
         Serial.printf("[HTTPS] Unable to connect\n");
       }
-
       // End extra scoping block
     }
   
