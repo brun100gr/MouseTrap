@@ -83,7 +83,7 @@ void checkVersion()
             
             // Read values
             Serial.println(doc["version"].as<float>());
-
+            sendTelegramMessage("Version: " + String(float(doc["version"])) + " - url: " + (const char*)doc["url"]);
             // Check if a newer version is available
             if (float(doc["version"]) > currentSWVersion.toFloat()) {
               Serial.println("New SW version available!");
@@ -177,8 +177,7 @@ void setup() {
   }
   Serial.printf("Version: %s - ADC %d, battery voltage: %f", currentSWVersion, batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
   debugA("Version: %s - ADC %d, battery voltage: %f", currentSWVersion, batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
-  String telegramMessage = "Version: " + currentSWVersion + " - ADC: " + String(batteryMonitorValue) + ", battery voltage: " + String(3.3/4096*batteryMonitorValue*2);
-  sendTelegramMessage(telegramMessage);
+  sendTelegramMessage(String("Version: " + currentSWVersion + " - ADC: " + String(batteryMonitorValue) + ", battery voltage: " + String(3.3/4096*batteryMonitorValue*2)));
 }
 
 void loop() {
