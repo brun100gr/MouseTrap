@@ -18,10 +18,24 @@ const int TIME_TO_SLEEP = 60; /* Time ESP32 will go to sleep (in seconds) */
 // Version SW
 const String currentSWVersion = "0.1";
 
+// How many times connection to AP is attempted
+const uint32_t CONNECTTION_ATTEMPTS_LIMIT = 20;
+
 const int AWAKE_TIME = 60;  // seconds
 int loopCounter = AWAKE_TIME;
 
-const int BUTTON_PIN_BITMASK = 0x200000000; // 2^33 in hex
+//Pushbuttons connected to GPIO32 & GPIO33
+uint64_t const BUTTON_PIN_BITMASK_GPIO32 = 0x100000000;	// Manual trigger
+uint64_t const BUTTON_PIN_BITMASK_GPIO33 = 0x200000000;	// Trap trigger
+
+// Wakeup reasons
+enum wakeUpReasonsEnum {
+  GPIO_MANUAL,
+  GPIO_TRAP,
+  GPIO_UNEXPECTED,
+  TIMER,
+  OTHER
+};
 
 // Battery monitor is connected to GPIO 34 (Analog ADC1_CH6) 
 const int batteryMonitorPin = 34;
@@ -131,16 +145,22 @@ void setup() {
 
   // Start serial port for debugging
   Serial.begin(115200);
+  
+  wakeUpReasonsEnum wakeUpReasons = static_cast<wakeUpReasonsEnum>(check_wakeup_reason());
 
-  print_wakeup_reason();
-
+  Serial.print("Wakeup reason: "); Serial.println(int(wakeUpReasons));
   // Connect to Wi-Fi network with SSID and password
   Serial.print("Connecting to ");
   Serial.println(ssid);
   WiFi.begin(ssid, password);
+  uint32_t connectionAttempts = 0; 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    connectionAttempts++;
+    if (connectionAttempts > CONNECTTION_ATTEMPTS_LIMIT) {
+      ESP.restart();
+    }
   }
 
   // Print local IP address
@@ -166,8 +186,7 @@ void setup() {
   checkVersion();
   // Setup wekeup sources
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_32,1); //1 = High, 0 = Low
-  esp_sleep_enable_ext1_wakeup(BUTTON_PIN_BITMASK,ESP_EXT1_WAKEUP_ANY_HIGH);
+  esp_sleep_enable_ext1_wakeup(BUTTON_PIN_BITMASK_GPIO32 + BUTTON_PIN_BITMASK_GPIO33, ESP_EXT1_WAKEUP_ANY_HIGH);
 
   // Reading battery voltage
   // Discard same samples to stabilize ADC
@@ -178,6 +197,10 @@ void setup() {
   Serial.printf("Version: %s - ADC %d, battery voltage: %f", currentSWVersion, batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
   debugA("Version: %s - ADC %d, battery voltage: %f", currentSWVersion, batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
   sendTelegramMessage(String("Version: " + currentSWVersion + " - ADC: " + String(batteryMonitorValue) + ", battery voltage: " + String(3.3/4096*batteryMonitorValue*2)));
+
+  delay(1000);
+  Serial.println("Go to sleep.");
+  esp_deep_sleep_start();
 }
 
 void loop() {
@@ -187,26 +210,9 @@ void loop() {
   Debug.handle();
 
   delay(1000);
-#if 0
-  if (stayAwake() == false) {
-    debugV("Start to sleep");
-    esp_deep_sleep_start();
-  }
-#endif
 }
 
-bool stayAwake(void) {
-  if (loopCounter > 0) {
-    loopCounter--;
-    debugA("+");
-    delay(1000);
-    return true;
-  } else {
-    return false;
-  }
-}
-
-void print_wakeup_reason(){
+int print_wakeup_reason(){
   esp_sleep_wakeup_cause_t wakeup_reason;
 
   wakeup_reason = esp_sleep_get_wakeup_cause();
@@ -218,5 +224,31 @@ void print_wakeup_reason(){
     case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
     case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
     default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+  }
+  return wakeup_reason;
+}
+
+int check_wakeup_reason() {
+   switch(print_wakeup_reason()){
+    case ESP_SLEEP_WAKEUP_EXT1:
+      if (BUTTON_PIN_BITMASK_GPIO32 & esp_sleep_get_ext1_wakeup_status()) {
+        Serial.println("Wakeup from GPIO_32.");
+        return GPIO_32;
+      } else if (BUTTON_PIN_BITMASK_GPIO33 & esp_sleep_get_ext1_wakeup_status()) {
+        Serial.println("Wakeup from GPIO_33.");
+        return GPIO_33;
+      } else {
+        Serial.println("Wakeup from unexpected GPIO.");
+        return GPIO_UNEXPECTED;
+      }
+    break;
+    case ESP_SLEEP_WAKEUP_TIMER:
+      Serial.println("Wakeup from TIMER");
+      return TIMER;
+    break;
+    default:
+      Serial.println("Other wakeup reason.");
+      return OTHER;
+    break;
   }
 }
