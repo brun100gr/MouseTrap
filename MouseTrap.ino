@@ -12,8 +12,12 @@
 const char *ssid     = mySSID;
 const char *password = myPASSWORD;
 
-const int uS_TO_S_FACTOR = 1000000; /* Conversion factor for micro seconds to seconds */ 
-const int TIME_TO_SLEEP = 60; /* Time ESP32 will go to sleep (in seconds) */
+const uint32_t uS_TO_S_FACTOR = 1000000; /* Conversion factor for micro seconds to seconds */ 
+const int32_t SLEEP_ONE_DAY = 86400; // 24 * 60 * 60 (1 day) Time ESP32 will go to sleep (in seconds)
+
+// Time zone constants
+const long  gmtOffset_sec = 3600;
+const int   daylightOffset_sec = 3600;
 
 // Version SW
 const String currentSWVersion = "0.1";
@@ -21,8 +25,11 @@ const String currentSWVersion = "0.1";
 // How many times connection to AP is attempted
 const uint32_t CONNECTTION_ATTEMPTS_LIMIT = 20;
 
-const int AWAKE_TIME = 60;  // seconds
-int loopCounter = AWAKE_TIME;
+// Daily wakeup time
+const int32_t WAKEUP_TIME = 19*3600 + 0*60;	// 7:00 PM
+
+// UpTime before entering in sleep mode
+const uint32_t UPTIME_BEFORE_SLEEP = 5*60;	// 5 minutes
 
 //Pushbuttons connected to GPIO32 & GPIO33
 uint64_t const BUTTON_PIN_BITMASK_GPIO32 = 0x100000000;	// Manual trigger
@@ -34,7 +41,8 @@ enum wakeUpReasonsEnum {
   GPIO_TRAP,
   GPIO_UNEXPECTED,
   TIMER,
-  OTHER
+  OTHER,
+  MAX
 };
 
 // Battery monitor is connected to GPIO 34 (Analog ADC1_CH6) 
@@ -43,9 +51,15 @@ const int batteryMonitorPin = 34;
 // Number of ADC samples to be discarded to stabilize ADC
 const int NUMBER_OF_SAMPLES = 3;
 
+// Save Wakeup reason in this variable
+wakeUpReasonsEnum wakeUpReasons = wakeUpReasonsEnum::MAX;
+
+// Save raw ADC value for battery voltage
+uint32_t batteryMonitorValue;
+
 // Set time via NTP, as required for x.509 validation
 void setClock() {
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");  // UTC
+  configTime(gmtOffset_sec, daylightOffset_sec, "pool.ntp.org", "time.nist.gov");  // Rome
 
   Serial.print(F("Waiting for NTP time sync: "));
   time_t now = time(nullptr);
@@ -63,6 +77,39 @@ void setClock() {
   Serial.print(F("Current time: "));
   Serial.print(asctime(&timeinfo));
   debugA("Current time: %s", asctime(&timeinfo));
+}
+
+void printLocalTime()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  Serial.print("Local time: ");
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+}
+
+void setNextWakeUp()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+
+  int32_t currentTime = timeinfo.tm_hour*3600 + timeinfo.tm_min*60 + timeinfo.tm_sec;
+
+  if(WAKEUP_TIME - currentTime > 0) {
+	esp_sleep_enable_timer_wakeup((WAKEUP_TIME - currentTime) * uS_TO_S_FACTOR);
+	Serial.print("Next wakeup in "); Serial.println(WAKEUP_TIME - currentTime);
+  } else {
+	esp_sleep_enable_timer_wakeup((SLEEP_ONE_DAY - (currentTime - WAKEUP_TIME)) * uS_TO_S_FACTOR);
+	uint32_t tmp = (SLEEP_ONE_DAY - (currentTime - WAKEUP_TIME));
+	Serial.printf("Next wakeup tomorrow in %d seconds - %d:%d:%d\n",  tmp, tmp/3600, (tmp - (tmp/3600)*3600)/60, tmp/3600);
+  }
+  Serial.flush(); 
 }
 
 void checkVersion()
@@ -141,12 +188,10 @@ void checkVersion()
 }
 
 void setup() {
-  int batteryMonitorValue;
-
   // Start serial port for debugging
   Serial.begin(115200);
   
-  wakeUpReasonsEnum wakeUpReasons = static_cast<wakeUpReasonsEnum>(check_wakeup_reason());
+  wakeUpReasons = static_cast<wakeUpReasonsEnum>(check_wakeup_reason());
 
   Serial.print("Wakeup reason: "); Serial.println(int(wakeUpReasons));
   // Connect to Wi-Fi network with SSID and password
@@ -185,7 +230,7 @@ void setup() {
   // Check if a new version is available
   checkVersion();
   // Setup wekeup sources
-  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+//  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   esp_sleep_enable_ext1_wakeup(BUTTON_PIN_BITMASK_GPIO32 + BUTTON_PIN_BITMASK_GPIO33, ESP_EXT1_WAKEUP_ANY_HIGH);
 
   // Reading battery voltage
@@ -194,22 +239,31 @@ void setup() {
   {
     batteryMonitorValue = analogRead(batteryMonitorPin);
   }
-  Serial.printf("Version: %s - ADC %d, battery voltage: %f", currentSWVersion, batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
+  Serial.printf("Version: %s - ADC %d, battery voltage: %f\n", currentSWVersion, batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
   debugA("Version: %s - ADC %d, battery voltage: %f", currentSWVersion, batteryMonitorValue, (3.3/4096*batteryMonitorValue*2));
-  sendTelegramMessage(String("Version: " + currentSWVersion + " - ADC: " + String(batteryMonitorValue) + ", battery voltage: " + String(3.3/4096*batteryMonitorValue*2)));
+//  sendTelegramMessage(String("Version: " + currentSWVersion + " - ADC: " + String(batteryMonitorValue) + ", battery voltage: " + String(3.3/4096*batteryMonitorValue*2)));
 
-  delay(1000);
-  Serial.println("Go to sleep.");
-  esp_deep_sleep_start();
+  printLocalTime();
 }
 
+uint32_t counterBeforeSleep = UPTIME_BEFORE_SLEEP;
 void loop() {
-  // Check OTA
-  ArduinoOTA.handle();
+  if ((wakeUpReasons == wakeUpReasonsEnum::GPIO_MANUAL) && (counterBeforeSleep > 0)) {
+  	Serial.printf("Seconds before sleep: %d\n", counterBeforeSleep);
+  	counterBeforeSleep--;
 
-  Debug.handle();
+    // Check OTA
+    ArduinoOTA.handle();
 
-  delay(1000);
+    Debug.handle();
+
+    delay(1000);
+  } else {
+	setNextWakeUp();
+
+	// Start to sleep
+    esp_deep_sleep_start();
+  }
 }
 
 int print_wakeup_reason(){
@@ -232,11 +286,11 @@ int check_wakeup_reason() {
    switch(print_wakeup_reason()){
     case ESP_SLEEP_WAKEUP_EXT1:
       if (BUTTON_PIN_BITMASK_GPIO32 & esp_sleep_get_ext1_wakeup_status()) {
-        Serial.println("Wakeup from GPIO_32.");
-        return GPIO_32;
+        Serial.println("Wakeup from GPIO_MANUAL(32).");
+        return GPIO_MANUAL;
       } else if (BUTTON_PIN_BITMASK_GPIO33 & esp_sleep_get_ext1_wakeup_status()) {
-        Serial.println("Wakeup from GPIO_33.");
-        return GPIO_33;
+        Serial.println("Wakeup from GPIO_TRAP(33).");
+        return GPIO_TRAP;
       } else {
         Serial.println("Wakeup from unexpected GPIO.");
         return GPIO_UNEXPECTED;
